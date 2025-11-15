@@ -82,15 +82,15 @@ async def himamikuji(interaction: discord.Interaction):
     last_time = data[user_id]["time"]
     streak = data[user_id]["streak"]
 
-    # 今日すでに引いた場合
-    if last_date == str(today):
-        emoji_streak = number_to_emoji(streak)
-        await interaction.response.send_message(
-            f"## {username}は今日はもうひまみくじを引きました！\n"
-            f"## 結果：【{last_result}】［ひまみくじ継続中！！！{emoji_streak}日目！！！］\n"
-            f"（{last_time} に引きました！）"
-        )
-        return
+   # 今日すでに引いた場合
+if last_date == str(today):
+    emoji_streak = number_to_emoji(streak)
+    await interaction.response.send_message(
+        f"## {username}は今日はもうひまみくじを引きました！\n"
+        f"## 結果：【{last_result}】［ひまみくじ継続中！！！{emoji_streak}日目！！！］（{last_time} に引きました！）"
+    )
+    return
+
 
     # おみくじ抽選
     results = [r[0] for r in omikuji_results]
