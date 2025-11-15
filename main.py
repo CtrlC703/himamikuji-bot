@@ -144,7 +144,7 @@ async def himamikuji(interaction: discord.Interaction):
 
 
 # 🔥 超重要：TOKEN をコードに直接書かない！
-TOKEN = os.getenv("TOKEN")
+TOKEN = os.getenv("DISCORD_TOKEN")
 bot.run(TOKEN)
 
 
