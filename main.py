@@ -26,18 +26,17 @@ def run_flask():
 Thread(target=run_flask).start()
 
 # --- Google Sheets 認証 ---
-if "GOOGLE_SERVICE_KEY" not in os.environ:
-    raise Exception("GOOGLE_SERVICE_KEY が設定されていません")
+if "GOOGLE_CREDENTIALS" not in os.environ:
+    raise Exception("GOOGLE_CREDENTIALS が設定されていません")
 
-service_key_json = os.environ["GOOGLE_SERVICE_KEY"]
+# 改行やスペースの扱いに注意
+service_key_json = os.environ["GOOGLE_CREDENTIALS"].replace("\\n", "\n")
 SERVICE_ACCOUNT_INFO = json.loads(service_key_json)
 
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 credentials = ServiceAccountCredentials.from_json_keyfile_dict(SERVICE_ACCOUNT_INFO, scope)
 gc = gspread.authorize(credentials)
 
-# ここでシートを開く（例）
-# SPREADSHEET_ID は Render の環境変数か直接IDで指定
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
 if not SPREADSHEET_ID:
     raise Exception("SPREADSHEET_ID が設定されていません")
@@ -118,7 +117,6 @@ async def himamikuji(interaction: discord.Interaction):
     })
     save_data(data)
 
-    # ここで Google Sheets にも書き込める（例: ユーザーID, 結果, 日付, 時間）
     try:
         sheet.append_row([user_id, username, str(today), result, streak, time_str])
     except Exception as e:
@@ -134,3 +132,4 @@ if not TOKEN:
     print("⚠️ DISCORD_TOKEN が設定されていません。Renderの環境変数に追加してください。")
 else:
     bot.run(TOKEN)
+
