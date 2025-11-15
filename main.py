@@ -18,7 +18,7 @@ def home():
     return "Bot is running!"
 
 def run_flask():
-    port = int(os.environ.get("PORT", 8080))  # Renderの環境変数 PORT を使用
+    port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
 # Flaskを別スレッドで起動
@@ -82,15 +82,14 @@ async def himamikuji(interaction: discord.Interaction):
     last_time = data[user_id]["time"]
     streak = data[user_id]["streak"]
 
-   # 今日すでに引いた場合
-if last_date == str(today):
-    emoji_streak = number_to_emoji(streak)
-    await interaction.response.send_message(
-        f"## {username}は今日はもうひまみくじを引きました！\n"
-        f"## 結果：【{last_result}】［ひまみくじ継続中！！！{emoji_streak}日目！！！］（{last_time} に引きました！）"
-    )
-    return
-
+    # ✅ 今日すでに引いた場合
+    if last_date == str(today):
+        emoji_streak = number_to_emoji(streak)
+        await interaction.response.send_message(
+            f"## {username}は今日はもうひまみくじを引きました！\n"
+            f"## 結果：【{last_result}】［ひまみくじ継続中！！！{emoji_streak}日目！！！］（{last_time} に引きました！）"
+        )
+        return
 
     # おみくじ抽選
     results = [r[0] for r in omikuji_results]
@@ -121,6 +120,3 @@ if not TOKEN:
     print("⚠️ DISCORD_TOKEN が設定されていません。Renderの環境変数に追加してください。")
 else:
     bot.run(TOKEN)
-
-
-
