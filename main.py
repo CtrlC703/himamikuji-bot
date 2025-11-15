@@ -29,8 +29,7 @@ Thread(target=run_flask).start()
 if "GOOGLE_CREDENTIALS" not in os.environ:
     raise Exception("GOOGLE_CREDENTIALS が設定されていません")
 
-# 改行やスペースの扱いに注意
-service_key_json = os.environ["GOOGLE_CREDENTIALS"].replace("\\n", "\n")
+service_key_json = os.environ["GOOGLE_CREDENTIALS"]
 SERVICE_ACCOUNT_INFO = json.loads(service_key_json)
 
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -129,7 +128,8 @@ async def himamikuji(interaction: discord.Interaction):
 
 TOKEN = os.environ.get("DISCORD_TOKEN")
 if not TOKEN:
-    print("⚠️ DISCORD_TOKEN が設定されていません。Renderの環境変数に追加してください。")
+    raise Exception("DISCORD_TOKEN が設定されていません")
 else:
     bot.run(TOKEN)
+
 
