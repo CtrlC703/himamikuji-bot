@@ -1,6 +1,6 @@
-discord.py
+discord.py>=2.4.0
 pytz
 flask
 gspread
-google-auth
 oauth2client
+pyasn1

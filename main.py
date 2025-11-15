@@ -1,21 +1,21 @@
 print("main.py を読み込みました")
 
-import discord
-from discord.ext import commands
+import os
 import json
+import random
 from datetime import datetime, timedelta
 import pytz
-import random
-import os
+import discord
+from discord.ext import commands
 from flask import Flask
 from threading import Thread
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# --- Flask keep-alive 用（Renderでは不要でも残してOK） ---
+# --- Flask keep-alive (Renderでは無くてもOK) ---
 app = Flask(__name__)
 
-@app.route('/')
+@app.route("/")
 def home():
     return "Bot is running!"
 
@@ -25,27 +25,32 @@ def run_flask():
 
 Thread(target=run_flask).start()
 
-# --- Google Sheets 認証 ---
+# --- 必須 env のチェック ---
 if "GOOGLE_CREDENTIALS" not in os.environ:
     raise Exception("GOOGLE_CREDENTIALS が設定されていません")
+if "SPREADSHEET_ID" not in os.environ:
+    raise Exception("SPREADSHEET_ID が設定されていません")
+if "DISCORD_TOKEN" not in os.environ:
+    raise Exception("DISCORD_TOKEN が設定されていません")
 
+# --- Google Sheets 認証（環境変数には JSON をそのまま貼る） ---
 service_key_json = os.environ["GOOGLE_CREDENTIALS"]
+# service_key_json は Google から落とした JSON をそのまま貼る（改行含む）
 SERVICE_ACCOUNT_INFO = json.loads(service_key_json)
-
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 credentials = ServiceAccountCredentials.from_json_keyfile_dict(SERVICE_ACCOUNT_INFO, scope)
 gc = gspread.authorize(credentials)
-
-SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
-if not SPREADSHEET_ID:
-    raise Exception("SPREADSHEET_ID が設定されていません")
-
+SPREADSHEET_ID = os.environ["SPREADSHEET_ID"]
 sheet = gc.open_by_key(SPREADSHEET_ID).worksheet("ひまみくじデータ")
 
 # --- Discord Bot ---
-JST = pytz.timezone('Asia/Tokyo')
-bot = commands.Bot(command_prefix="!", intents=discord.Intents.default())
+JST = pytz.timezone("Asia/Tokyo")
+intents = discord.Intents.default()
+# スラッシュコマンドだけなら message_content は不要。ただし必要なら True にする
+intents.message_content = False
+bot = commands.Bot(command_prefix="!", intents=intents)
 
+# 絵文字変換
 def number_to_emoji(num):
     digits = {"0":"0️⃣","1":"1️⃣","2":"2️⃣","3":"3️⃣","4":"4️⃣",
               "5":"5️⃣","6":"6️⃣","7":"7️⃣","8":"8️⃣","9":"9️⃣"}
@@ -89,11 +94,13 @@ async def himamikuji(interaction: discord.Interaction):
     last_time = data[user_id]["time"]
     streak = data[user_id]["streak"]
 
+    # すでに今日引いている場合（2行表示）
     if last_date == str(today):
         emoji_streak = number_to_emoji(streak)
         await interaction.response.send_message(
             f"## {username}は今日はもうひまみくじを引きました！\n"
-            f"## 結果：【{last_result}】［ひまみくじ継続中！！！{emoji_streak}日目！！！］（{last_time} に引きました！）"
+            f"## 結果：［ひまみくじ継続中！！！{emoji_streak}日目！！！］\n"
+            f"（{last_time} に引きました！）"
         )
         return
 
@@ -116,20 +123,19 @@ async def himamikuji(interaction: discord.Interaction):
     })
     save_data(data)
 
+    # Google Sheets に書き込み（失敗しても例外を吐かない）
     try:
         sheet.append_row([user_id, username, str(today), result, streak, time_str])
     except Exception as e:
         print("Google Sheets 書き込み失敗:", e)
 
     await interaction.response.send_message(
-        f"## {username}の今日の運勢は【{result}】です！！！\n"
+        f"## {username}の今日の運勢はです！！！\n"
         f"## ［ひまみくじ継続中！！！{emoji_streak}日目！！！］"
     )
 
-TOKEN = os.environ.get("DISCORD_TOKEN")
-if not TOKEN:
-    raise Exception("DISCORD_TOKEN が設定されていません")
-else:
-    bot.run(TOKEN)
+# --- Bot 起動 ---
+TOKEN = os.environ["DISCORD_TOKEN"]
+bot.run(TOKEN)
 
 
