@@ -10,7 +10,7 @@ import os
 from flask import Flask
 from threading import Thread
 
-# --- Flask keep-alive 用 ---
+# --- Flask keep-alive 用（Renderでは不要でも残してOK） ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -18,7 +18,7 @@ def home():
     return "Bot is running!"
 
 def run_flask():
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.environ.get("PORT", 8080))  # Renderの環境変数 PORT を使用
     app.run(host="0.0.0.0", port=port)
 
 # Flaskを別スレッドで起動
@@ -66,7 +66,7 @@ async def on_ready():
     await bot.tree.sync()
     print("BOT は起動しました！")
 
-# --- /ひまみくじ ---
+# --- /ひまみくじ コマンド ---
 @bot.tree.command(name="ひまみくじ", description="1日1回 ひまみくじを引けます！")
 async def himamikuji(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
@@ -74,6 +74,7 @@ async def himamikuji(interaction: discord.Interaction):
     data = load_data()
     today = datetime.now(JST).date()
 
+    # 初回データ
     if user_id not in data:
         data[user_id] = {"last_date": None, "result": None, "streak": 0, "time": "不明"}
 
@@ -82,7 +83,7 @@ async def himamikuji(interaction: discord.Interaction):
     last_time = data[user_id]["time"]
     streak = data[user_id]["streak"]
 
-    # ✅ 今日すでに引いた場合
+    # 今日すでに引いた場合
     if last_date == str(today):
         emoji_streak = number_to_emoji(streak)
         await interaction.response.send_message(
@@ -96,16 +97,21 @@ async def himamikuji(interaction: discord.Interaction):
     weights = [r[1] for r in omikuji_results]
     result = random.choices(results, weights)[0]
 
-    # ストリーク計算
+    # ストリーク判定
     if last_date == str(today - timedelta(days=1)):
         streak += 1
     else:
         streak = 1
     emoji_streak = number_to_emoji(streak)
 
-    # 記録
+    # 今日の結果を更新（既存情報は残す）
     time_str = datetime.now(JST).strftime("%H:%M")
-    data[user_id] = {"last_date": str(today), "result": result, "streak": streak, "time": time_str}
+    data[user_id].update({
+        "last_date": str(today),
+        "result": result,
+        "streak": streak,
+        "time": time_str
+    })
     save_data(data)
 
     # 結果送信
