@@ -1,141 +1,84 @@
-print("main.py を読み込みました")
-
 import os
 import json
 import random
-from datetime import datetime, timedelta
-import pytz
+from flask import Flask
 import discord
 from discord.ext import commands
-from flask import Flask
-from threading import Thread
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 
-# --- Flask keep-alive (Renderでは無くてもOK) ---
+# ============================
+# Flask（Render の Web 停止対策）
+# ============================
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Bot is running!"
+    return "Himamikuji Bot is running!"
 
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+# ============================
+# Google Sheets 接続設定
+# ============================
+GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 
-Thread(target=run_flask).start()
-
-# --- 必須 env のチェック ---
-if "GOOGLE_CREDENTIALS" not in os.environ:
+if not GOOGLE_CREDENTIALS:
     raise Exception("GOOGLE_CREDENTIALS が設定されていません")
-if "SPREADSHEET_ID" not in os.environ:
-    raise Exception("SPREADSHEET_ID が設定されていません")
-if "DISCORD_TOKEN" not in os.environ:
-    raise Exception("DISCORD_TOKEN が設定されていません")
 
-# --- Google Sheets 認証（環境変数には JSON をそのまま貼る） ---
-service_key_json = os.environ["GOOGLE_CREDENTIALS"]
-# service_key_json は Google から落とした JSON をそのまま貼る（改行含む）
-SERVICE_ACCOUNT_INFO = json.loads(service_key_json)
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-credentials = ServiceAccountCredentials.from_json_keyfile_dict(SERVICE_ACCOUNT_INFO, scope)
-gc = gspread.authorize(credentials)
-SPREADSHEET_ID = os.environ["SPREADSHEET_ID"]
-sheet = gc.open_by_key(SPREADSHEET_ID).worksheet("ひまみくじデータ")
+creds_dict = json.loads(GOOGLE_CREDENTIALS)
 
-# --- Discord Bot ---
-JST = pytz.timezone("Asia/Tokyo")
-intents = discord.Intents.default()
-# スラッシュコマンドだけなら message_content は不要。ただし必要なら True にする
-intents.message_content = False
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-# 絵文字変換
-def number_to_emoji(num):
-    digits = {"0":"0️⃣","1":"1️⃣","2":"2️⃣","3":"3️⃣","4":"4️⃣",
-              "5":"5️⃣","6":"6️⃣","7":"7️⃣","8":"8️⃣","9":"9️⃣"}
-    return "".join(digits[d] for d in str(num))
-
-omikuji_results = [
-    ("大大吉", 0.3), ("大吉", 15), ("吉", 20), ("中吉", 25),
-    ("小吉", 35), ("末吉", 1), ("凶", 10), ("大凶", 5),
-    ("大大凶", 0.1), ("ひま吉", 0.5), ("C賞", 0.5)
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
 ]
 
-def load_data():
-    try:
-        with open("data.json", "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        return {}
+credentials = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+gc = gspread.authorize(credentials)
 
-def save_data(data):
-    with open("data.json", "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+# ❗ スプレッドシート ID はこれだけ（URL ではない）
+SPREADSHEET_ID = "1LDx3y_j1CukwVtj0186z9kP6bspPkfsz_oVW79WNOCU"
 
-@bot.event
-async def on_ready():
-    print(f"ログイン完了：{bot.user}")
-    await bot.tree.sync()
-    print("BOT は起動しました！")
+sheet = gc.open_by_key(SPREADSHEET_ID).worksheet("ひまみくじデータ")
 
-@bot.tree.command(name="ひまみくじ", description="1日1回 ひまみくじを引けます！")
-async def himamikuji(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    username = interaction.user.display_name
-    data = load_data()
-    today = datetime.now(JST).date()
+# ============================
+# Discord BOT セットアップ
+# ============================
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+if not DISCORD_TOKEN:
+    raise Exception("DISCORD_TOKEN が設定されていません")
 
-    if user_id not in data:
-        data[user_id] = {"last_date": None, "result": None, "streak": 0, "time": "不明"}
+intents = discord.Intents.default()
+bot = commands.Bot(command_prefix="/", intents=intents)
 
-    last_date = data[user_id]["last_date"]
-    last_result = data[user_id]["result"]
-    last_time = data[user_id]["time"]
-    streak = data[user_id]["streak"]
+# ============================
+# コマンド
+# ============================
+@bot.command()
+async def ひまみくじ(ctx):
+    fortunes = [
+        "大吉", "中吉", "小吉", "末吉", "凶", "大凶",
+        "ひま吉", "C賞"
+    ]
 
-    # すでに今日引いている場合（2行表示）
-    if last_date == str(today):
-        emoji_streak = number_to_emoji(streak)
-        await interaction.response.send_message(
-            f"## {username}は今日はもうひまみくじを引きました！\n"
-            f"## 結果：［ひまみくじ継続中！！！{emoji_streak}日目！！！］\n"
-            f"（{last_time} に引きました！）"
-        )
-        return
+    result = random.choice(fortunes)
 
-    results = [r[0] for r in omikuji_results]
-    weights = [r[1] for r in omikuji_results]
-    result = random.choices(results, weights)[0]
+    # シートに記録
+    sheet.append_row([str(ctx.author.id), ctx.author.name, result])
 
-    if last_date == str(today - timedelta(days=1)):
-        streak += 1
-    else:
-        streak = 1
-    emoji_streak = number_to_emoji(streak)
+    await ctx.send(f"{ctx.author.mention} の今日の運勢は… **{result}** ！")
 
-    time_str = datetime.now(JST).strftime("%H:%M")
-    data[user_id].update({
-        "last_date": str(today),
-        "result": result,
-        "streak": streak,
-        "time": time_str
-    })
-    save_data(data)
+# ============================
+# Bot 起動
+# ============================
+def run_discord():
+    bot.run(DISCORD_TOKEN)
 
-    # Google Sheets に書き込み（失敗しても例外を吐かない）
-    try:
-        sheet.append_row([user_id, username, str(today), result, streak, time_str])
-    except Exception as e:
-        print("Google Sheets 書き込み失敗:", e)
+# ============================
+# Main
+# ============================
+if __name__ == "__main__":
+    # Flask はバックグラウンドで動かす
+    import threading
+    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=10000)).start()
 
-    await interaction.response.send_message(
-        f"## {username}の今日の運勢はです！！！\n"
-        f"## ［ひまみくじ継続中！！！{emoji_streak}日目！！！］"
-    )
-
-# --- Bot 起動 ---
-TOKEN = os.environ["DISCORD_TOKEN"]
-bot.run(TOKEN)
-
-
+    # Discord bot
+    run_discord()
