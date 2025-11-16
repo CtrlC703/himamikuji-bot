@@ -128,7 +128,7 @@ async def himamikuji(interaction: discord.Interaction):
         emoji_streak = number_to_emoji(streak)
         await interaction.response.send_message(
             f"## {username}は今日はもうひまみくじを引きました！\n"
-            f"## 結果：【{last_result}】［継続 {emoji_streak}日目］（{last_time} に引きました）"
+            f"## 結果：【{last_result}】［ひまみくじ継続中！！！ {emoji_streak}日目！！！］（{last_time} に引きました）"
         )
         return
 
@@ -164,7 +164,7 @@ async def himamikuji(interaction: discord.Interaction):
     emoji_streak = number_to_emoji(streak)
     await interaction.response.send_message(
         f"## {username} の今日の運勢は【{result}】です！\n"
-        f"## ［継続 {emoji_streak}日目］"
+        f"## ［ひまみくじ継続中！！！ {emoji_streak}日目！！！］"
     )
 
 # --- 実行 ---
