@@ -10,9 +10,8 @@ from threading import Thread
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# --- Flask keep-alive（必要なら有効） ---
+# --- Flask keep-alive ---
 app = Flask(__name__)
-
 @app.route('/')
 def home():
     return "Bot is running!"
@@ -20,7 +19,6 @@ def home():
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
-
 Thread(target=run_flask).start()
 
 # --- Google Sheets 認証 ---
@@ -61,7 +59,6 @@ def save_data_file(data):
     with open("data.json", "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# --- 数字 → 絵文字 ---
 def number_to_emoji(num):
     digits = {"0":"0️⃣","1":"1️⃣","2":"2️⃣","3":"3️⃣","4":"4️⃣",
               "5":"5️⃣","6":"6️⃣","7":"7️⃣","8":"8️⃣","9":"9️⃣"}
@@ -74,29 +71,18 @@ omikuji_results = [
     ("大大凶", 0.1), ("ひま吉", 0.5), ("C賞", 0.5)
 ]
 
-# --- 結果列マップ（I列～S列） ---
 RESULT_COL_MAP = {
-    "大大吉": 9,  # I
-    "大吉": 10,   # J
-    "吉": 11,     # K
-    "中吉": 12,   # L
-    "小吉": 13,   # M
-    "末吉": 14,   # N
-    "凶": 15,     # O
-    "大凶": 16,   # P
-    "大大凶": 17, # Q
-    "ひま吉": 18, # R
-    "C賞": 19     # S
+    "大大吉": 9, "大吉": 10, "吉": 11, "中吉": 12, "小吉": 13,
+    "末吉": 14, "凶": 15, "大凶": 16, "大大凶": 17, "ひま吉": 18, "C賞": 19
 }
 
-# --- 起動時処理 ---
+# --- 起動時 ---
 @bot.event
 async def on_ready():
     global data_cache
     print(f"ログイン完了：{bot.user}")
     data_cache = load_data_file()
     print("data.json → キャッシュ復元完了")
-
     try:
         guild_id = int(os.environ.get("DISCORD_GUILD_ID", 0))
         if guild_id:
@@ -108,10 +94,9 @@ async def on_ready():
             print(f"グローバル同期: {len(synced)}")
     except Exception as e:
         print("同期エラー:", e)
-
     print("BOT 起動完了！")
 
-# --- シート更新ユーティリティ ---
+# --- ユーティリティ ---
 def find_user_row(user_id):
     try:
         cell = sheet.find(str(user_id), in_column=1)
@@ -134,16 +119,16 @@ def update_existing_row(row, user_id, username, date_str, time_str, result):
     prev_streak = safe_int(existing[5])
     prev_total = safe_int(existing[6])
     prev_best = safe_int(existing[7])
+    result_counts = [safe_int(existing[i]) for i in range(8,19)]
 
     today = datetime.now(JST).date()
+    prev_date = None
     if prev_date_str:
         try:
             prev_date = datetime.strptime(prev_date_str, "%Y-%m-%d").date()
-        except:
-            prev_date = None
-    else:
-        prev_date = None
+        except: pass
 
+    # 継続判定
     if prev_date and today - prev_date == timedelta(days=1):
         streak = prev_streak + 1
     elif prev_date and today == prev_date:
@@ -154,24 +139,22 @@ def update_existing_row(row, user_id, username, date_str, time_str, result):
     total = prev_total + 1 if not (prev_date and today == prev_date) else prev_total
     best = max(prev_best, streak)
 
-    # 結果列増分
+    # 結果列更新
     result_col = RESULT_COL_MAP.get(result)
-    result_counts = [safe_int(existing[i]) for i in range(8,19)]
-    if result_col:
+    if result_col and not (prev_date and today == prev_date):
         idx = result_col - 9
-        if not (prev_date and today == prev_date):
-            result_counts[idx] += 1
+        result_counts[idx] += 1
 
+    # 新しい行データ
     new_row = [""] * 19
     new_row[0] = str(user_id)
     new_row[1] = username
     new_row[2] = date_str
     new_row[3] = time_str
-    new_row[4] = result  # E
-    new_row[5] = str(streak)  # F
-    new_row[6] = str(total)   # G
-    new_row[7] = str(best)    # H
-
+    new_row[4] = result
+    new_row[5] = str(streak)
+    new_row[6] = str(total)
+    new_row[7] = str(best)
     for i in range(11):
         new_row[8+i] = str(result_counts[i])
 
@@ -209,10 +192,9 @@ async def himamikuji(interaction: discord.Interaction):
 
     if user_id not in data_cache:
         data_cache[user_id] = {"last_date": None, "result": None, "streak":0, "time":"不明"}
-
     user = data_cache[user_id]
 
-    # --- 同日重複チェック ---
+    # --- 今日既に引いたか判定 ---
     if user["last_date"] == str(today):
         emoji_streak = number_to_emoji(user["streak"])
         await interaction.response.send_message(
@@ -221,12 +203,12 @@ async def himamikuji(interaction: discord.Interaction):
         )
         return
 
-    # --- 抽選 ---
+    # --- おみくじ抽選 ---
     results = [r[0] for r in omikuji_results]
     weights = [r[1] for r in omikuji_results]
     result = random.choices(results, weights)[0]
 
-    # --- Google Sheets 更新 ---
+    # --- シート更新 ---
     try:
         row = find_user_row(user_id)
         if row:
@@ -254,6 +236,4 @@ async def himamikuji(interaction: discord.Interaction):
 TOKEN = os.environ.get("DISCORD_TOKEN")
 if not TOKEN:
     raise Exception("DISCORD_TOKEN が設定されていません")
-
 bot.run(TOKEN)
-
