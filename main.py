@@ -12,12 +12,15 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # --- Flask keep-alive ---
 app = Flask(__name__)
+
 @app.route('/')
 def home():
     return "Bot is running!"
+
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
+
 Thread(target=run_flask).start()
 
 # --- Google Sheets 認証 ---
@@ -25,13 +28,16 @@ service_key_json = os.environ.get("GOOGLE_SERVICE_KEY")
 if not service_key_json:
     raise Exception("GOOGLE_SERVICE_KEY が設定されていません")
 SERVICE_ACCOUNT_INFO = json.loads(service_key_json)
-scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+
+scope = ["https://www.googleapis.com/auth/spreadsheets",
+         "https://www.googleapis.com/auth/drive"]
 credentials = ServiceAccountCredentials.from_json_keyfile_dict(SERVICE_ACCOUNT_INFO, scope)
 gc = gspread.authorize(credentials)
 
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
 if not SPREADSHEET_ID:
     raise Exception("SPREADSHEET_ID が設定されていません")
+
 sheet = gc.open_by_key(SPREADSHEET_ID).worksheet("ひまみくじデータ")
 
 # --- JST設定 ---
@@ -68,19 +74,29 @@ omikuji_results = [
     ("大大凶", 0.1), ("ひま吉", 0.5), ("C賞", 0.5)
 ]
 
-# --- 結果列マップ ---
+# --- 結果列マップ（I列～S列） ---
 RESULT_COL_MAP = {
-    "大大吉": 9, "大吉":10, "吉":11, "中吉":12, "小吉":13,
-    "末吉":14, "凶":15, "大凶":16, "大大凶":17, "ひま吉":18, "C賞":19
+    "大大吉": 9,  # I
+    "大吉": 10,   # J
+    "吉": 11,     # K
+    "中吉": 12,   # L
+    "小吉": 13,   # M
+    "末吉": 14,   # N
+    "凶": 15,     # O
+    "大凶": 16,   # P
+    "大大凶": 17, # Q
+    "ひま吉": 18, # R
+    "C賞": 19     # S
 }
 
-# --- 起動時 ---
+# --- 起動時処理 ---
 @bot.event
 async def on_ready():
     global data_cache
     print(f"ログイン完了：{bot.user}")
     data_cache = load_data_file()
     print("data.json → キャッシュ復元完了")
+
     try:
         guild_id = int(os.environ.get("DISCORD_GUILD_ID", 0))
         if guild_id:
@@ -92,9 +108,10 @@ async def on_ready():
             print(f"グローバル同期: {len(synced)}")
     except Exception as e:
         print("同期エラー:", e)
+
     print("BOT 起動完了！")
 
-# --- シート更新 ---
+# --- シート更新ユーティリティ ---
 def find_user_row(user_id):
     try:
         cell = sheet.find(str(user_id), in_column=1)
@@ -103,8 +120,10 @@ def find_user_row(user_id):
         return None
 
 def safe_int(val):
-    try: return int(val)
-    except: return 0
+    try:
+        return int(val)
+    except:
+        return 0
 
 def update_existing_row(row, user_id, username, date_str, time_str, result):
     existing = sheet.row_values(row)
@@ -115,44 +134,45 @@ def update_existing_row(row, user_id, username, date_str, time_str, result):
     prev_streak = safe_int(existing[5])
     prev_total = safe_int(existing[6])
     prev_best = safe_int(existing[7])
+
     today = datetime.now(JST).date()
+    prev_date = None
     if prev_date_str:
         try:
             prev_date = datetime.strptime(prev_date_str, "%Y-%m-%d").date()
         except:
-            prev_date = None
-    else:
-        prev_date = None
+            pass
 
-    # 継続判定
-    if prev_date and today - prev_date == timedelta(days=1):
-        streak = prev_streak + 1
-    elif prev_date and today == prev_date:
+    if prev_date == today:
         streak = prev_streak
+        total = prev_total
+    elif prev_date == today - timedelta(days=1):
+        streak = prev_streak + 1
+        total = prev_total + 1
     else:
         streak = 1
+        total = prev_total + 1
 
-    total = prev_total + 1 if not (prev_date and today == prev_date) else prev_total
     best = max(prev_best, streak)
 
-    # 結果列増分
     result_col = RESULT_COL_MAP.get(result)
     result_counts = [safe_int(existing[i]) for i in range(8,19)]
-    if result_col and not (prev_date and today == prev_date):
+    if result_col and not (prev_date == today):
         idx = result_col - 9
         result_counts[idx] += 1
 
     new_row = [""]*19
-    new_row[0]=str(user_id)
-    new_row[1]=username
-    new_row[2]=date_str
-    new_row[3]=time_str
-    new_row[4]=result
-    new_row[5]=str(streak)
-    new_row[6]=str(total)
-    new_row[7]=str(best)
+    new_row[0] = str(user_id)
+    new_row[1] = username
+    new_row[2] = date_str
+    new_row[3] = time_str
+    new_row[4] = result
+    new_row[5] = str(streak)
+    new_row[6] = str(total)
+    new_row[7] = str(best)
     for i in range(11):
         new_row[8+i] = str(result_counts[i])
+
     sheet.update(f"A{row}:S{row}", [new_row])
 
 def create_new_row(user_id, username, date_str, time_str, result):
@@ -160,19 +180,18 @@ def create_new_row(user_id, username, date_str, time_str, result):
     total = 1
     best = 1
     new_row = [""]*19
-    new_row[0]=str(user_id)
-    new_row[1]=username
-    new_row[2]=date_str
-    new_row[3]=time_str
-    new_row[4]=result
-    new_row[5]=str(streak)
-    new_row[6]=str(total)
-    new_row[7]=str(best)
-    for i in range(11): new_row[8+i]="0"
-    result_col = RESULT_COL_MAP.get(result)
-    if result_col:
-        idx = result_col - 9
-        new_row[8+idx] = "1"
+    new_row[0] = str(user_id)
+    new_row[1] = username
+    new_row[2] = date_str
+    new_row[3] = time_str
+    new_row[4] = result
+    new_row[5] = str(streak)
+    new_row[6] = str(total)
+    new_row[7] = str(best)
+    for i in range(11):
+        new_row[8+i] = "0"
+    idx = RESULT_COL_MAP.get(result) - 9
+    new_row[8+idx] = "1"
     sheet.append_row(new_row)
 
 # --- スラッシュコマンド ---
@@ -184,13 +203,12 @@ async def himamikuji(interaction: discord.Interaction):
     today_str = today.strftime("%Y-%m-%d")
     time_str = datetime.now(JST).strftime("%H:%M")
 
-    # キャッシュ初期化
     if user_id not in data_cache:
         data_cache[user_id] = {"last_date": None, "result": None, "streak":0, "time":"不明"}
 
     user = data_cache[user_id]
 
-    # --- 今日すでに引いた場合はキャッシュ・シート更新しない ---
+    # 同日チェック
     if user["last_date"] == str(today):
         emoji_streak = number_to_emoji(user["streak"])
         await interaction.response.send_message(
@@ -199,12 +217,12 @@ async def himamikuji(interaction: discord.Interaction):
         )
         return
 
-    # --- 抽選 ---
+    # 抽選
     results = [r[0] for r in omikuji_results]
     weights = [r[1] for r in omikuji_results]
     result = random.choices(results, weights)[0]
 
-    # --- シート更新 ---
+    # Google Sheets 更新
     try:
         row = find_user_row(user_id)
         if row:
@@ -214,7 +232,7 @@ async def himamikuji(interaction: discord.Interaction):
     except Exception as e:
         print("Google Sheets 書き込み失敗:", e)
 
-    # --- キャッシュ更新 ---
+    # キャッシュ更新
     if user["last_date"] == str(today - timedelta(days=1)):
         streak = user["streak"] + 1
     else:
@@ -232,4 +250,5 @@ async def himamikuji(interaction: discord.Interaction):
 TOKEN = os.environ.get("DISCORD_TOKEN")
 if not TOKEN:
     raise Exception("DISCORD_TOKEN が設定されていません")
+
 bot.run(TOKEN)
