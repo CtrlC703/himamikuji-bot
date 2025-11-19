@@ -10,7 +10,7 @@ from threading import Thread
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# --- Flask keep-alive ---
+# --- Flask keep-alive（必要なら有効） ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -59,9 +59,9 @@ def load_data_file():
 
 def save_data_file(data):
     with open("data.json", "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+        json.dump(data, f, ensure_ascii=False, indent=4)
 
-# --- 絵文字変換 ---
+# --- 数字 → 絵文字 ---
 def number_to_emoji(num):
     digits = {"0":"0️⃣","1":"1️⃣","2":"2️⃣","3":"3️⃣","4":"4️⃣",
               "5":"5️⃣","6":"6️⃣","7":"7️⃣","8":"8️⃣","9":"9️⃣"}
@@ -74,7 +74,7 @@ omikuji_results = [
     ("大大凶", 0.1), ("ひま吉", 0.5), ("C賞", 0.5)
 ]
 
-# --- 結果列マップ I..S ---
+# --- 結果列マップ（I列～S列） ---
 RESULT_COL_MAP = {
     "大大吉": 9,  # I
     "大吉": 10,   # J
@@ -89,29 +89,29 @@ RESULT_COL_MAP = {
     "C賞": 19     # S
 }
 
-# --- Bot起動時に Sheets から復元 ---
-def restore_cache_from_sheet():
+# --- 起動時処理 ---
+@bot.event
+async def on_ready():
     global data_cache
-    rows = sheet.get_all_values()
-    for row in rows[1:]:  # ヘッダー行スキップ
-        if len(row) < 6:
-            continue
-        user_id = row[0].strip()
-        last_date = row[2].strip()
-        last_time = row[3].strip()
-        last_result = row[4].strip()
-        streak = int(row[5]) if row[5].isdigit() else 0
-        if user_id:
-            data_cache[user_id] = {
-                "last_date": last_date,
-                "result": last_result,
-                "streak": streak,
-                "time": last_time
-            }
-    save_data_file(data_cache)
-    print(f"Sheetsからキャッシュ復元完了: {len(data_cache)} 件")
+    print(f"ログイン完了：{bot.user}")
+    data_cache = load_data_file()
+    print("data.json → キャッシュ復元完了")
 
-# --- ユーティリティ ---
+    try:
+        guild_id = int(os.environ.get("DISCORD_GUILD_ID", 0))
+        if guild_id:
+            guild = discord.Object(id=guild_id)
+            synced = await bot.tree.sync(guild=guild)
+            print(f"サーバー同期: {len(synced)}")
+        else:
+            synced = await bot.tree.sync()
+            print(f"グローバル同期: {len(synced)}")
+    except Exception as e:
+        print("同期エラー:", e)
+
+    print("BOT 起動完了！")
+
+# --- シート更新ユーティリティ ---
 def find_user_row(user_id):
     try:
         cell = sheet.find(str(user_id), in_column=1)
@@ -129,38 +129,52 @@ def update_existing_row(row, user_id, username, date_str, time_str, result):
     existing = sheet.row_values(row)
     while len(existing) < 19:
         existing.append("")
+
     prev_date_str = existing[2]
     prev_streak = safe_int(existing[5])
     prev_total = safe_int(existing[6])
     prev_best = safe_int(existing[7])
+
     today = datetime.now(JST).date()
-    try:
-        prev_date = datetime.strptime(prev_date_str, "%Y-%m-%d").date() if prev_date_str else None
-    except:
+    if prev_date_str:
+        try:
+            prev_date = datetime.strptime(prev_date_str, "%Y-%m-%d").date()
+        except:
+            prev_date = None
+    else:
         prev_date = None
-    if prev_date is not None and today - prev_date == timedelta(days=1):
+
+    if prev_date and today - prev_date == timedelta(days=1):
         streak = prev_streak + 1
+    elif prev_date and today == prev_date:
+        streak = prev_streak
     else:
         streak = 1
-    total = prev_total + 1
+
+    total = prev_total + 1 if not (prev_date and today == prev_date) else prev_total
     best = max(prev_best, streak)
-    # 結果列
+
+    # 結果列増分
     result_col = RESULT_COL_MAP.get(result)
     result_counts = [safe_int(existing[i]) for i in range(8,19)]
     if result_col:
         idx = result_col - 9
-        result_counts[idx] += 1
-    new_row = [""]*19
-    new_row[0] = user_id
+        if not (prev_date and today == prev_date):
+            result_counts[idx] += 1
+
+    new_row = [""] * 19
+    new_row[0] = str(user_id)
     new_row[1] = username
     new_row[2] = date_str
     new_row[3] = time_str
-    new_row[4] = result
-    new_row[5] = str(streak)
-    new_row[6] = str(total)
-    new_row[7] = str(best)
+    new_row[4] = result  # E
+    new_row[5] = str(streak)  # F
+    new_row[6] = str(total)   # G
+    new_row[7] = str(best)    # H
+
     for i in range(11):
         new_row[8+i] = str(result_counts[i])
+
     sheet.update(f"A{row}:S{row}", [new_row])
 
 def create_new_row(user_id, username, date_str, time_str, result):
@@ -168,7 +182,7 @@ def create_new_row(user_id, username, date_str, time_str, result):
     total = 1
     best = 1
     new_row = [""]*19
-    new_row[0] = user_id
+    new_row[0] = str(user_id)
     new_row[1] = username
     new_row[2] = date_str
     new_row[3] = time_str
@@ -184,26 +198,7 @@ def create_new_row(user_id, username, date_str, time_str, result):
         new_row[8+idx] = "1"
     sheet.append_row(new_row)
 
-# --- 起動イベント ---
-@bot.event
-async def on_ready():
-    print(f"ログイン完了: {bot.user}")
-    restore_cache_from_sheet()
-    # スラッシュコマンド同期
-    try:
-        guild_id = int(os.environ.get("DISCORD_GUILD_ID", 0))
-        if guild_id:
-            guild = discord.Object(id=guild_id)
-            synced = await bot.tree.sync(guild=guild)
-            print(f"サーバー同期: {len(synced)}")
-        else:
-            synced = await bot.tree.sync()
-            print(f"グローバル同期: {len(synced)}")
-    except Exception as e:
-        print("同期エラー:", e)
-    print("BOT 起動完了！")
-
-# --- /ひまみくじ ---
+# --- スラッシュコマンド ---
 @bot.tree.command(name="ひまみくじ", description="1日1回 ひまみくじを引けます！")
 async def himamikuji(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
@@ -212,48 +207,26 @@ async def himamikuji(interaction: discord.Interaction):
     today_str = today.strftime("%Y-%m-%d")
     time_str = datetime.now(JST).strftime("%H:%M")
 
-    # キャッシュ初期化
     if user_id not in data_cache:
-        data_cache[user_id] = {
-            "last_date": None,
-            "result": None,
-            "streak": 0,
-            "time": "不明"
-        }
+        data_cache[user_id] = {"last_date": None, "result": None, "streak":0, "time":"不明"}
 
     user = data_cache[user_id]
-    last_date = user["last_date"]
-    streak_cache = user["streak"]
 
-    # 同日重複チェック
-    if last_date == today_str:
-        emoji_streak = number_to_emoji(streak_cache)
+    # --- 同日重複チェック ---
+    if user["last_date"] == str(today):
+        emoji_streak = number_to_emoji(user["streak"])
         await interaction.response.send_message(
-            f"{username}は今日はもうひまみくじを引きました！\n"
-            f"結果：【{user['result']}】 継続中 {emoji_streak}日目（{user['time']}に引きました）"
+            f"## {username}は今日はもうひまみくじを引きました！\n"
+            f"## 結果：【{user['result']}】［ひまみくじ継続中！！！ {emoji_streak}日目！！！］（{user['time']} に引きました）"
         )
         return
 
-    # 抽選
+    # --- 抽選 ---
     results = [r[0] for r in omikuji_results]
     weights = [r[1] for r in omikuji_results]
     result = random.choices(results, weights)[0]
 
-    # キャッシュ更新
-    if last_date == (today - timedelta(days=1)).strftime("%Y-%m-%d"):
-        streak_cache += 1
-    else:
-        streak_cache = 1
-
-    data_cache[user_id] = {
-        "last_date": today_str,
-        "result": result,
-        "streak": streak_cache,
-        "time": time_str
-    }
-    save_data_file(data_cache)
-
-    # Sheets 更新
+    # --- Google Sheets 更新 ---
     try:
         row = find_user_row(user_id)
         if row:
@@ -263,10 +236,18 @@ async def himamikuji(interaction: discord.Interaction):
     except Exception as e:
         print("Google Sheets 書き込み失敗:", e)
 
-    emoji_streak = number_to_emoji(streak_cache)
+    # --- キャッシュ更新 ---
+    if user["last_date"] == str(today - timedelta(days=1)):
+        streak = user["streak"] + 1
+    else:
+        streak = 1
+    data_cache[user_id] = {"last_date": str(today), "result": result, "streak": streak, "time": time_str}
+    save_data_file(data_cache)
+
+    emoji_streak = number_to_emoji(streak)
     await interaction.response.send_message(
-        f"{username} の今日の運勢は【{result}】です！\n"
-        f"継続中！！！ {emoji_streak}日目！！！"
+        f"## {username} の今日の運勢は【{result}】です！\n"
+        f"## ［ひまみくじ継続中！！！ {emoji_streak}日目！！！］"
     )
 
 # --- 実行 ---
