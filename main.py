@@ -81,20 +81,49 @@ RESULT_COL_MAP = {
     "大大凶": 17,"ひま吉": 18,"C賞": 19
 }
 
+# --- Google Sheets から data.json を復元 ---
+def sync_from_sheet():
+    global data_cache
+    all_values = sheet.get_all_values()
+    for row in all_values[1:]:  # 1行目はヘッダ
+        if len(row) < 8:
+            continue
+        user_id = row[0].strip()
+        username = row[1].strip() if row[1].strip() else "Unknown"
+        last_date = row[2].strip()
+        result = row[4].strip() if len(row) > 4 else None
+        streak = int(row[5]) if row[5].isdigit() else 0
+        time = row[3].strip() if row[3].strip() else "不明"
+        if user_id:
+            data_cache[user_id] = {
+                "last_date": last_date,
+                "result": result,
+                "streak": streak,
+                "time": time,
+                "username": username
+            }
+    save_data_file(data_cache)
+    print("Google Sheets → data.json キャッシュ復元完了！")
+
 # --- 起動時処理 ---
 @bot.event
 async def on_ready():
     global data_cache
     print(f"ログイン完了：{bot.user}")
+
+    # data.json 読み込み
     data_cache = load_data_file()
-    print("data.json → キャッシュ復元完了")
+
+    # Google Sheets と同期してキャッシュ復元
+    sync_from_sheet()
+
+    print(f"キャッシュ復元完了: {len(data_cache)} ユーザー")
 
     try:
         guild_id = int(os.environ.get("DISCORD_GUILD_ID", 0))
         if guild_id:
-            guild = discord.Object(id=guild_id)
-            synced = await bot.tree.sync(guild=guild)
-            print(f"サーバー同期: {len(synced)}")
+            synced = await bot.tree.sync(guild=discord.Object(id=guild_id))
+            print(f"ギルド同期完了: {len(synced)} コマンド更新")
         else:
             synced = await bot.tree.sync()
             print(f"グローバル同期: {len(synced)}")
@@ -107,8 +136,8 @@ async def on_ready():
 def find_user_row(user_id):
     try:
         cell = sheet.find(str(user_id), in_column=1)
-        return cell.row if cell else None
-    except gspread.CellNotFound:
+        return cell.row
+    except gspread.exceptions.CellNotFound:
         return None
 
 def safe_int(val):
@@ -117,7 +146,7 @@ def safe_int(val):
     except:
         return 0
 
-def update_existing_row(row, user_id, username, date_str, time_str, result, first_time=None):
+def update_existing_row(row, user_id, username, date_str, time_str, result):
     existing = sheet.row_values(row)
     while len(existing) < 19:
         existing.append("")
@@ -126,7 +155,7 @@ def update_existing_row(row, user_id, username, date_str, time_str, result, firs
     prev_streak = safe_int(existing[5])
     prev_total = safe_int(existing[6])
     prev_best = safe_int(existing[7])
-    prev_time = existing[3] if existing[3] else (first_time or time_str)
+    prev_time = existing[3] if existing[3].strip() else time_str
 
     today = datetime.now(JST).date()
     prev_date = None
@@ -156,9 +185,9 @@ def update_existing_row(row, user_id, username, date_str, time_str, result, firs
 
     new_row = [""]*19
     new_row[0] = str(user_id)
-    new_row[1] = username or "Unknown"
+    new_row[1] = username
     new_row[2] = date_str
-    new_row[3] = prev_time
+    new_row[3] = prev_time  # 初回引いた時間を保持
     new_row[4] = result
     new_row[5] = str(streak)
     new_row[6] = str(total)
@@ -174,7 +203,7 @@ def create_new_row(user_id, username, date_str, time_str, result):
     best = 1
     new_row = [""]*19
     new_row[0] = str(user_id)
-    new_row[1] = username or "Unknown"
+    new_row[1] = username
     new_row[2] = date_str
     new_row[3] = time_str
     new_row[4] = result
@@ -191,17 +220,13 @@ def create_new_row(user_id, username, date_str, time_str, result):
 @bot.tree.command(name="ひまみくじ", description="1日1回 ひまみくじを引けます！")
 async def himamikuji(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
-    username = interaction.user.display_name or "Unknown"
+    username = interaction.user.display_name
     today = datetime.now(JST).date()
     today_str = today.strftime("%Y-%m-%d")
     time_str = datetime.now(JST).strftime("%H:%M")
 
-    # 初回登録
     if user_id not in data_cache:
-        data_cache[user_id] = {"username": username, "last_date": None, "result": None, "streak":0, "time": time_str}
-    else:
-        # ユーザー名更新
-        data_cache[user_id]["username"] = username
+        data_cache[user_id] = {"last_date": None, "result": None, "streak":0, "time": "不明", "username": username}
 
     user = data_cache[user_id]
 
@@ -223,7 +248,7 @@ async def himamikuji(interaction: discord.Interaction):
     try:
         row = find_user_row(user_id)
         if row:
-            update_existing_row(row, user_id, username, today_str, time_str, result, first_time=user["time"])
+            update_existing_row(row, user_id, username, today_str, time_str, result)
         else:
             create_new_row(user_id, username, today_str, time_str, result)
     except Exception as e:
@@ -235,15 +260,13 @@ async def himamikuji(interaction: discord.Interaction):
     else:
         streak = 1
 
-    # 最初に引いた時間は変えない
-    first_time = user["time"] if user["time"] else time_str
-    data_cache[user_id] = {"username": username, "last_date": str(today), "result": result, "streak": streak, "time": first_time}
+    data_cache[user_id] = {"last_date": str(today), "result": result, "streak": streak, "time": time_str, "username": username}
     save_data_file(data_cache)
 
     emoji_streak = number_to_emoji(streak)
     await interaction.response.send_message(
         f"## {username} の今日の運勢は【{result}】です！\n"
-        f"## ［ひまみくじ継続中！！！ {emoji_streak}日目！！！］（{first_time} に引きました）"
+        f"## ［ひまみくじ継続中！！！ {emoji_streak}日目！！！］"
     )
 
 # --- 実行 ---
@@ -252,3 +275,5 @@ if not TOKEN:
     raise Exception("DISCORD_TOKEN が設定されていません")
 
 bot.run(TOKEN)
+
+
