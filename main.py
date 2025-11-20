@@ -147,18 +147,16 @@ def update_existing_row(row, user_id, username, date_str, time_str, result):
 
     best = max(prev_best, streak)
 
-    # 最新ユーザー名で上書き
-    username_to_save = username or existing[1] or "Unknown"
-
+    # 結果カウントの更新（今日すでに引いた場合はスキップ）
     result_col = RESULT_COL_MAP.get(result)
     result_counts = [safe_int(existing[i]) for i in range(8,19)]
-    if result_col and not (prev_date == today):
+    if result_col and prev_date != today:
         idx = result_col - 9
         result_counts[idx] += 1
 
     new_row = [""]*19
     new_row[0] = str(user_id)
-    new_row[1] = username_to_save
+    new_row[1] = username or "Unknown"
     new_row[2] = date_str
     new_row[3] = time_str
     new_row[4] = result
@@ -198,12 +196,13 @@ async def himamikuji(interaction: discord.Interaction):
     today_str = today.strftime("%Y-%m-%d")
     time_str = datetime.now(JST).strftime("%H:%M")
 
+    # キャッシュに初期値
     if user_id not in data_cache:
         data_cache[user_id] = {"last_date": None, "result": None, "streak":0, "time":"不明"}
 
     user = data_cache[user_id]
 
-    # 同日チェック
+    # 同日チェック（既に引いてたらGoogle Sheets 更新はスキップ）
     if user["last_date"] == str(today):
         emoji_streak = number_to_emoji(user["streak"])
         await interaction.response.send_message(
@@ -221,7 +220,9 @@ async def himamikuji(interaction: discord.Interaction):
     try:
         row = find_user_row(user_id)
         if row:
-            update_existing_row(row, user_id, username, today_str, time_str, result)
+            # 今日引いていない場合のみ更新
+            if user["last_date"] != str(today):
+                update_existing_row(row, user_id, username, today_str, time_str, result)
         else:
             create_new_row(user_id, username, today_str, time_str, result)
     except Exception as e:
@@ -237,8 +238,8 @@ async def himamikuji(interaction: discord.Interaction):
 
     emoji_streak = number_to_emoji(streak)
     await interaction.response.send_message(
-        f"## {username} の今日の運勢は【{result}】です！\n"
-        f"## ［ひまみくじ継続中！！！ {emoji_streak}日目！！！］"
+        f"## {username} の今日の運勢は【{result}】です！\n" 
+        f"## ［ひまみくじ継続中！！！ {emoji_streak}日目！！！］" 
     )
 
 # --- 実行 ---
@@ -247,3 +248,4 @@ if not TOKEN:
     raise Exception("DISCORD_TOKEN が設定されていません")
 
 bot.run(TOKEN)
+
