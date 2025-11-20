@@ -76,17 +76,9 @@ omikuji_results = [
 
 # --- 結果列マップ（I列～S列） ---
 RESULT_COL_MAP = {
-    "大大吉": 9,  # I
-    "大吉": 10,   # J
-    "吉": 11,     # K
-    "中吉": 12,   # L
-    "小吉": 13,   # M
-    "末吉": 14,   # N
-    "凶": 15,     # O
-    "大凶": 16,   # P
-    "大大凶": 17, # Q
-    "ひま吉": 18, # R
-    "C賞": 19     # S
+    "大大吉": 9,  "大吉": 10, "吉": 11, "中吉": 12,
+    "小吉": 13, "末吉": 14, "凶": 15, "大凶": 16,
+    "大大凶": 17, "ひま吉": 18, "C賞": 19
 }
 
 # --- 起動時処理 ---
@@ -157,7 +149,7 @@ def update_existing_row(row, user_id, username, date_str, time_str, result):
 
     result_col = RESULT_COL_MAP.get(result)
     result_counts = [safe_int(existing[i]) for i in range(8,19)]
-    if result_col and not (prev_date == today):
+    if result_col and prev_date != today:
         idx = result_col - 9
         result_counts[idx] += 1
 
@@ -204,16 +196,15 @@ async def himamikuji(interaction: discord.Interaction):
     time_str = datetime.now(JST).strftime("%H:%M")
 
     if user_id not in data_cache:
-        data_cache[user_id] = {"last_date": None, "result": None, "streak":0, "time":"不明"}
+        data_cache[user_id] = {"last_date": None, "result": None, "streak": 0, "time": "不明"}
 
     user = data_cache[user_id]
 
     # 同日チェック
     if user["last_date"] == str(today):
-        emoji_streak = number_to_emoji(user["streak"])
         await interaction.response.send_message(
-            f"## {username}は今日はもうひまみくじを引きました！\n"
-            f"## 結果：【{user['result']}】［ひまみくじ継続中！！！ {emoji_streak}日目！！！］（{user['time']} に引きました）"
+            f"{username}は今日はもうひまみくじを引きました！\n"
+            f"結果：【{user['result']}】［ひまみくじ継続中！！！ {number_to_emoji(user['streak'])}日目！！！］（{user['time']} に引きました）"
         )
         return
 
@@ -240,10 +231,9 @@ async def himamikuji(interaction: discord.Interaction):
     data_cache[user_id] = {"last_date": str(today), "result": result, "streak": streak, "time": time_str}
     save_data_file(data_cache)
 
-    emoji_streak = number_to_emoji(streak)
     await interaction.response.send_message(
-        f"## {username} の今日の運勢は【{result}】です！\n"
-        f"## ［ひまみくじ継続中！！！ {emoji_streak}日目！！！］"
+        f"{username} の今日の運勢は【{result}】です！\n"
+        f"［ひまみくじ継続中！！！ {number_to_emoji(streak)}日目！！！］"
     )
 
 # --- 実行 ---
@@ -252,3 +242,4 @@ if not TOKEN:
     raise Exception("DISCORD_TOKEN が設定されていません")
 
 bot.run(TOKEN)
+
