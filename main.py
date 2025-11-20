@@ -107,8 +107,7 @@ async def on_ready():
 def find_user_row(user_id):
     try:
         cell = sheet.find(str(user_id), in_column=1)
-        if cell:
-            return cell.row
+        return cell.row if cell else None
     except gspread.CellNotFound:
         return None
 
@@ -118,7 +117,7 @@ def safe_int(val):
     except:
         return 0
 
-def update_existing_row(row, user_id, username, date_str, time_str, result):
+def update_existing_row(row, user_id, username, date_str, time_str, result, first_time=None):
     existing = sheet.row_values(row)
     while len(existing) < 19:
         existing.append("")
@@ -127,8 +126,7 @@ def update_existing_row(row, user_id, username, date_str, time_str, result):
     prev_streak = safe_int(existing[5])
     prev_total = safe_int(existing[6])
     prev_best = safe_int(existing[7])
-    prev_time = existing[3] if existing[3] else time_str
-    username = username or existing[1] or "Unknown"
+    prev_time = existing[3] if existing[3] else (first_time or time_str)
 
     today = datetime.now(JST).date()
     prev_date = None
@@ -158,9 +156,9 @@ def update_existing_row(row, user_id, username, date_str, time_str, result):
 
     new_row = [""]*19
     new_row[0] = str(user_id)
-    new_row[1] = username
+    new_row[1] = username or "Unknown"
     new_row[2] = date_str
-    new_row[3] = prev_time  # 初回引いた時間を維持
+    new_row[3] = prev_time
     new_row[4] = result
     new_row[5] = str(streak)
     new_row[6] = str(total)
@@ -198,8 +196,12 @@ async def himamikuji(interaction: discord.Interaction):
     today_str = today.strftime("%Y-%m-%d")
     time_str = datetime.now(JST).strftime("%H:%M")
 
+    # 初回登録
     if user_id not in data_cache:
-        data_cache[user_id] = {"username": username, "last_date": None, "result": None, "streak":0, "time":time_str}
+        data_cache[user_id] = {"username": username, "last_date": None, "result": None, "streak":0, "time": time_str}
+    else:
+        # ユーザー名更新
+        data_cache[user_id]["username"] = username
 
     user = data_cache[user_id]
 
@@ -221,7 +223,7 @@ async def himamikuji(interaction: discord.Interaction):
     try:
         row = find_user_row(user_id)
         if row:
-            update_existing_row(row, user_id, username, today_str, time_str, result)
+            update_existing_row(row, user_id, username, today_str, time_str, result, first_time=user["time"])
         else:
             create_new_row(user_id, username, today_str, time_str, result)
     except Exception as e:
@@ -232,13 +234,16 @@ async def himamikuji(interaction: discord.Interaction):
         streak = user["streak"] + 1
     else:
         streak = 1
-    data_cache[user_id] = {"username": username, "last_date": str(today), "result": result, "streak": streak, "time": user.get("time", time_str)}
+
+    # 最初に引いた時間は変えない
+    first_time = user["time"] if user["time"] else time_str
+    data_cache[user_id] = {"username": username, "last_date": str(today), "result": result, "streak": streak, "time": first_time}
     save_data_file(data_cache)
 
     emoji_streak = number_to_emoji(streak)
     await interaction.response.send_message(
-        f"## {username} の今日の運勢は【{result}】です！\n" 
-        f"## ［ひまみくじ継続中！！！ {emoji_streak}日目！！！］"
+        f"## {username} の今日の運勢は【{result}】です！\n"
+        f"## ［ひまみくじ継続中！！！ {emoji_streak}日目！！！］（{first_time} に引きました）"
     )
 
 # --- 実行 ---
@@ -247,4 +252,3 @@ if not TOKEN:
     raise Exception("DISCORD_TOKEN が設定されていません")
 
 bot.run(TOKEN)
-
