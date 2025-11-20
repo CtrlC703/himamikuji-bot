@@ -9,6 +9,7 @@ from flask import Flask
 from threading import Thread
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import time
 
 # --- Flask keep-alive ---
 app = Flask(__name__)
@@ -81,43 +82,23 @@ RESULT_COL_MAP = {
     "大大凶": 17,"ひま吉": 18,"C賞": 19
 }
 
-# --- 起動時処理 ---
-@bot.event
-async def on_ready():
-    global data_cache
-    print(f"ログイン完了：{bot.user}")
-    data_cache = load_data_file()
-    print("data.json → キャッシュ復元完了")
-
-    try:
-        guild_id = int(os.environ.get("DISCORD_GUILD_ID", 0))
-        if guild_id:
-            guild = discord.Object(id=guild_id)
-            synced = await bot.tree.sync(guild=guild)
-            print(f"サーバー同期: {len(synced)}")
-        else:
-            synced = await bot.tree.sync()
-            print(f"グローバル同期: {len(synced)}")
-    except Exception as e:
-        print("同期エラー:", e)
-
-    print("BOT 起動完了！")
-
 # --- シート更新ユーティリティ ---
-def find_user_row(user_id):
-    try:
-        cell = sheet.find(str(user_id), in_column=1)
-        return cell.row
-    except gspread.exceptions.CellNotFound:
-        return None
-
 def safe_int(val):
     try:
         return int(val)
     except:
         return 0
 
-def update_existing_row(row, user_id, username, date_str, time_str, result):
+def find_user_row(user_id):
+    try:
+        cell = sheet.find(str(user_id), in_column=1)
+        if cell:
+            return cell.row
+        return None
+    except Exception:
+        return None
+
+def update_existing_row(row, user_id, username, date_str, time_str, result, first_time=None):
     existing = sheet.row_values(row)
     while len(existing) < 19:
         existing.append("")
@@ -126,6 +107,7 @@ def update_existing_row(row, user_id, username, date_str, time_str, result):
     prev_streak = safe_int(existing[5])
     prev_total = safe_int(existing[6])
     prev_best = safe_int(existing[7])
+    result_counts = [safe_int(existing[i]) for i in range(8,19)]
 
     today = datetime.now(JST).date()
     prev_date = None
@@ -147,11 +129,12 @@ def update_existing_row(row, user_id, username, date_str, time_str, result):
 
     best = max(prev_best, streak)
 
-    # 結果カウントの更新（今日すでに引いた場合はスキップ）
-    result_col = RESULT_COL_MAP.get(result)
-    result_counts = [safe_int(existing[i]) for i in range(8,19)]
-    if result_col and prev_date != today:
-        idx = result_col - 9
+    # 初回引いた時間を保持
+    if first_time:
+        time_str = first_time
+
+    if result in RESULT_COL_MAP and prev_date != today:
+        idx = RESULT_COL_MAP[result] - 9
         result_counts[idx] += 1
 
     new_row = [""]*19
@@ -187,7 +170,7 @@ def create_new_row(user_id, username, date_str, time_str, result):
     new_row[8+idx] = "1"
     sheet.append_row(new_row)
 
-# --- スラッシュコマンド ---
+# --- Discord スラッシュコマンド ---
 @bot.tree.command(name="ひまみくじ", description="1日1回 ひまみくじを引けます！")
 async def himamikuji(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
@@ -196,13 +179,11 @@ async def himamikuji(interaction: discord.Interaction):
     today_str = today.strftime("%Y-%m-%d")
     time_str = datetime.now(JST).strftime("%H:%M")
 
-    # キャッシュに初期値
     if user_id not in data_cache:
         data_cache[user_id] = {"last_date": None, "result": None, "streak":0, "time":"不明"}
 
     user = data_cache[user_id]
 
-    # 同日チェック（既に引いてたらGoogle Sheets 更新はスキップ）
     if user["last_date"] == str(today):
         emoji_streak = number_to_emoji(user["streak"])
         await interaction.response.send_message(
@@ -220,9 +201,7 @@ async def himamikuji(interaction: discord.Interaction):
     try:
         row = find_user_row(user_id)
         if row:
-            # 今日引いていない場合のみ更新
-            if user["last_date"] != str(today):
-                update_existing_row(row, user_id, username, today_str, time_str, result)
+            update_existing_row(row, user_id, username, today_str, time_str, result, first_time=user.get("time"))
         else:
             create_new_row(user_id, username, today_str, time_str, result)
     except Exception as e:
@@ -233,14 +212,67 @@ async def himamikuji(interaction: discord.Interaction):
         streak = user["streak"] + 1
     else:
         streak = 1
-    data_cache[user_id] = {"last_date": str(today), "result": result, "streak": streak, "time": time_str}
+    data_cache[user_id] = {"last_date": str(today), "result": result, "streak": streak, "time": user.get("time") or time_str}
     save_data_file(data_cache)
 
     emoji_streak = number_to_emoji(streak)
     await interaction.response.send_message(
-        f"## {username} の今日の運勢は【{result}】です！\n" 
-        f"## ［ひまみくじ継続中！！！ {emoji_streak}日目！！！］" 
+        f"## {username} の今日の運勢は【{result}】です！\n"
+        f"## ［ひまみくじ継続中！！！ {emoji_streak}日目！！！］"
     )
+
+# --- 自動同期スレッド ---
+def periodic_sync(interval_sec=3600):
+    while True:
+        try:
+            for user_id, user_data in data_cache.items():
+                row = find_user_row(user_id)
+                if row:
+                    update_existing_row(
+                        row,
+                        user_id,
+                        None,
+                        user_data["last_date"],
+                        user_data["time"],
+                        user_data["result"],
+                        first_time=user_data["time"]
+                    )
+                else:
+                    create_new_row(
+                        user_id,
+                        None,
+                        user_data["last_date"],
+                        user_data["time"],
+                        user_data["result"]
+                    )
+            print("data.json → Google Sheets 同期完了")
+        except Exception as e:
+            print("同期エラー:", e)
+        time.sleep(interval_sec)
+
+Thread(target=periodic_sync, daemon=True).start()
+
+# --- 起動処理 ---
+@bot.event
+async def on_ready():
+    global data_cache
+    print(f"ログイン完了：{bot.user}")
+    data_cache = load_data_file()
+    print("data.json → キャッシュ復元完了")
+
+    try:
+        guild_id = int(os.environ.get("DISCORD_GUILD_ID", 0))
+        if guild_id:
+            guild = discord.Object(id=guild_id)
+            synced = await bot.tree.sync(guild=guild)
+            print(f"サーバー同期: {len(synced)}")
+        else:
+            synced = await bot.tree.sync()
+            print(f"グローバル同期: {len(synced)}")
+    except Exception as e:
+        print("同期エラー:", e)
+
+    print("BOT 起動完了！")
 
 # --- 実行 ---
 TOKEN = os.environ.get("DISCORD_TOKEN")
@@ -248,4 +280,3 @@ if not TOKEN:
     raise Exception("DISCORD_TOKEN が設定されていません")
 
 bot.run(TOKEN)
-
