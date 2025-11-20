@@ -107,7 +107,8 @@ async def on_ready():
 def find_user_row(user_id):
     try:
         cell = sheet.find(str(user_id), in_column=1)
-        return cell.row
+        if cell:
+            return cell.row
     except gspread.CellNotFound:
         return None
 
@@ -117,24 +118,17 @@ def safe_int(val):
     except:
         return 0
 
-def update_existing_row(row, user_id, username, date_str, time_str, result, first_time=None):
+def update_existing_row(row, user_id, username, date_str, time_str, result):
     existing = sheet.row_values(row)
     while len(existing) < 19:
         existing.append("")
-
-    # 初回に引いた時間を保持
-    if first_time:
-        time_to_use = first_time
-    elif existing[3]:
-        time_to_use = existing[3]  # 既存の時間を使用
-    else:
-        time_to_use = time_str
 
     prev_date_str = existing[2]
     prev_streak = safe_int(existing[5])
     prev_total = safe_int(existing[6])
     prev_best = safe_int(existing[7])
-    result_counts = [safe_int(existing[i]) for i in range(8,19)]
+    prev_time = existing[3] if existing[3] else time_str
+    username = username or existing[1] or "Unknown"
 
     today = datetime.now(JST).date()
     prev_date = None
@@ -144,7 +138,6 @@ def update_existing_row(row, user_id, username, date_str, time_str, result, firs
         except:
             pass
 
-    # 日付による継続判定
     if prev_date == today:
         streak = prev_streak
         total = prev_total
@@ -157,17 +150,17 @@ def update_existing_row(row, user_id, username, date_str, time_str, result, firs
 
     best = max(prev_best, streak)
 
-    # 結果カウント更新（同日なら増やさない）
     result_col = RESULT_COL_MAP.get(result)
-    if result_col and prev_date != today:
+    result_counts = [safe_int(existing[i]) for i in range(8,19)]
+    if result_col and not (prev_date == today):
         idx = result_col - 9
         result_counts[idx] += 1
 
     new_row = [""]*19
     new_row[0] = str(user_id)
-    new_row[1] = username or existing[1] or "Unknown"
+    new_row[1] = username
     new_row[2] = date_str
-    new_row[3] = time_to_use
+    new_row[3] = prev_time  # 初回引いた時間を維持
     new_row[4] = result
     new_row[5] = str(streak)
     new_row[6] = str(total)
@@ -205,9 +198,8 @@ async def himamikuji(interaction: discord.Interaction):
     today_str = today.strftime("%Y-%m-%d")
     time_str = datetime.now(JST).strftime("%H:%M")
 
-    # キャッシュ初期化
     if user_id not in data_cache:
-        data_cache[user_id] = {"last_date": None, "result": None, "streak":0, "time":time_str}
+        data_cache[user_id] = {"username": username, "last_date": None, "result": None, "streak":0, "time":time_str}
 
     user = data_cache[user_id]
 
@@ -215,7 +207,7 @@ async def himamikuji(interaction: discord.Interaction):
     if user["last_date"] == str(today):
         emoji_streak = number_to_emoji(user["streak"])
         await interaction.response.send_message(
-            f"## {username}は今日はもうひまみくじを引きました！\n"
+            f"## {user['username']}は今日はもうひまみくじを引きました！\n"
             f"## 結果：【{user['result']}】［ひまみくじ継続中！！！ {emoji_streak}日目！！！］（{user['time']} に引きました）"
         )
         return
@@ -228,10 +220,8 @@ async def himamikuji(interaction: discord.Interaction):
     # Google Sheets 更新
     try:
         row = find_user_row(user_id)
-        first_time = None
         if row:
-            first_time = sheet.cell(row, 4).value  # 既存の直近時間を取得
-            update_existing_row(row, user_id, username, today_str, time_str, result, first_time=first_time)
+            update_existing_row(row, user_id, username, today_str, time_str, result)
         else:
             create_new_row(user_id, username, today_str, time_str, result)
     except Exception as e:
@@ -242,12 +232,12 @@ async def himamikuji(interaction: discord.Interaction):
         streak = user["streak"] + 1
     else:
         streak = 1
-    data_cache[user_id] = {"last_date": str(today), "result": result, "streak": streak, "time": user.get("time", time_str)}
+    data_cache[user_id] = {"username": username, "last_date": str(today), "result": result, "streak": streak, "time": user.get("time", time_str)}
     save_data_file(data_cache)
 
     emoji_streak = number_to_emoji(streak)
     await interaction.response.send_message(
-        f"## {username} の今日の運勢は【{result}】です！\n"
+        f"## {username} の今日の運勢は【{result}】です！\n" 
         f"## ［ひまみくじ継続中！！！ {emoji_streak}日目！！！］"
     )
 
