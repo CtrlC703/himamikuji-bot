@@ -1,6 +1,7 @@
 discord.py
+asyncpg
 gspread
 oauth2client
-pytz
-Flask
+python-dotenv
+
 
