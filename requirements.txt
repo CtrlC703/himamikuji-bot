@@ -1,8 +1,9 @@
-discord.py>=2.3
-asyncpg
-python-dotenv
+discord.py
 gspread
 google-auth
-google-api-python-client
-oauth2client
+google-auth-oauthlib
+google-auth-httplib2
+psycopg2-binary
+python-dotenv
+
 
