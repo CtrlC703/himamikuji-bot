@@ -1,148 +1,144 @@
 import os
 import random
-from datetime import datetime
 import discord
 from discord.ext import commands
+from datetime import datetime, timedelta
+import gspread
 from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
+import psycopg2
 from dotenv import load_dotenv
 
-# --- dotenv 読み込み ---
 load_dotenv()
 
-TOKEN = os.getenv("DISCORD_TOKEN")
+# ====== ENV ======
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = int(os.getenv("GUILD_ID"))
+DATABASE_URL = os.getenv("DATABASE_URL")
 GOOGLE_SERVICE_KEY = os.getenv("GOOGLE_SERVICE_KEY")
-SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 
-# --- Bot 初期化 ---
+if not DISCORD_TOKEN:
+    raise ValueError("DISCORD_TOKEN が .env に設定されていません")
+
+# ===== Discord Bot =====
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# --- 役の設定と確率 ---
-ROLES = [
-    ("大大吉", 0.5), ("大吉", 15), ("吉", 20), ("中吉", 25),
-    ("小吉", 35), ("末吉", 1), ("凶", 10), ("大凶", 5),
-    ("大大凶", 0.1), ("ひま吉", 0.5), ("C賞", 0.5)
-]
-
-def draw_role():
-    names, weights = zip(*ROLES)
-    total = sum(weights)
-    probs = [w/total for w in weights]
-    return random.choices(names, probs)[0]
-
-# --- Google Sheets 初期化 ---
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+# ===== Google Sheet =====
+SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = Credentials.from_service_account_file(GOOGLE_SERVICE_KEY, scopes=SCOPES)
-service = build('sheets', 'v4', credentials=creds)
-sheet = service.spreadsheets()
+client = gspread.authorize(creds)
 
-# --- ユーザー情報取得 ---
-def get_sheet_data():
-    result = sheet.values().get(spreadsheetId=SPREADSHEET_ID, range="A2:S").execute()
-    values = result.get("values", [])
-    return values
+sheet = client.open("ひまみくじデータ").sheet1  # 位置は絶対に変えない
 
-def update_sheet_data(values):
-    sheet.values().update(
-        spreadsheetId=SPREADSHEET_ID,
-        range="A2:S",
-        valueInputOption="USER_ENTERED",
-        body={"values": values}
-    ).execute()
 
-def find_user_row(user_id, data):
-    for idx, row in enumerate(data):
-        if len(row) > 0 and str(row[0]) == str(user_id):
-            return idx
-    return None
+def get_sheet_row(user_id):
+    rows = sheet.get_all_values()
+    for i, row in enumerate(rows):
+        if row[0] == user_id:
+            return i, row
+    return None, None
 
-# --- Bot 起動時 ---
-@bot.event
-async def on_ready():
-    print(f"Logged in as {bot.user}")
-    print("BOT起動成功！🎉")
 
-# --- スラッシュコマンド ---
+def write_sheet(user_id, username, date, time, result, streak, total, best, counts):
+    row_index, row = get_sheet_row(user_id)
+
+    values = [user_id, username, date, time, result, streak, total, best] + counts
+
+    if row_index is not None:
+        sheet.update(f"A{row_index+1}:S{row_index+1}", [values])
+    else:
+        sheet.append_row(values)
+
+
+# ===== ひまみくじ確率 =====
+fortune_list = [
+    "大大吉","大吉","吉","中吉","小吉","末吉","凶","大凶","大大凶","ひま吉","C賞"
+]
+fortune_weights = [0.5,15,20,25,35,1,10,5,0.1,0.5,0.5]
+
+
+def draw_fortune():
+    return random.choices(fortune_list, weights=fortune_weights, k=1)[0]
+
+
+# ===== コマンド =====
 @bot.tree.command(name="ひまみくじ", description="1日1回ひまみくじを引けます!", guild=discord.Object(id=GUILD_ID))
 async def himamikuji(interaction: discord.Interaction):
-    await interaction.response.defer()  # 「考え中…」表示
+
+    await interaction.response.defer()
 
     user_id = str(interaction.user.id)
     username = interaction.user.display_name
     today = datetime.now().strftime("%Y-%m-%d")
     now_time = datetime.now().strftime("%H:%M")
 
-    data = get_sheet_data()
-    row_idx = find_user_row(user_id, data)
+    row_index, row = get_sheet_row(user_id)
 
-    if row_idx is not None:
-        row = data[row_idx]
-        # 必要な列を拡張しておく
-        while len(row) < 19:
-            row.append("0")
-
-        last_date = row[2] if len(row) > 2 else ""
-        last_time = row[3] if len(row) > 3 else now_time
-        last_result = row[4] if len(row) > 4 else ""
-        streak = int(row[5]) if row[5] else 0
-        total_count = int(row[6]) if row[6] else 0
-        max_streak = int(row[7]) if row[7] else 0
-
-        if last_date == today:
-            # 今日すでに引いた場合
-            await interaction.followup.send(
-                f"## {username}は今日はもうひまみくじを引きました！\n"
-                f"## 結果：【{last_result}】［ひまみくじ継続中！！！ {streak}️⃣日目！！！］（{last_time} に引きました）"
-            )
-            return
-        else:
-            # 日付が変わった場合、連続日数更新
-            streak = streak + 1
-            total_count = total_count + 1
-    else:
-        # 初回ユーザー
+    # ============ 初回ユーザー ============
+    if row is None:
+        result = draw_fortune()
         streak = 1
-        total_count = 1
-        max_streak = 1
-        row = [user_id, username] + [""] * 17
-        data.append(row)
-        row_idx = len(data) - 1
+        total = 1
+        best = 1
+        counts = [1 if f == result else 0 for f in fortune_list]
 
-    # 抽選
-    result = draw_role()
+        write_sheet(user_id, username, today, now_time, result, streak, total, best, counts)
 
-    # 最高継続更新
-    max_streak = max(max_streak, streak)
+        return await interaction.followup.send(
+            f"## 🎉 **{username} の今日の運勢は【{result}】です！**\n"
+            f"## [ひまみくじ継続中！！！ 🔥1️⃣ 日目！！！]"
+        )
 
-    # 役のカウント更新
-    role_idx_map = {name: i for i, (name, _) in enumerate(ROLES, start=7)}
-    if result in role_idx_map:
-        idx = role_idx_map[result]
-        row[idx] = str(int(row[idx]) + 1 if row[idx] else 1)
+    # ============ 既存ユーザー ============
+    last_date = row[2]
+    last_time = row[3]
+    last_result = row[4]
 
-    # 行を更新
-    row[2] = today
-    row[3] = now_time
-    row[4] = result
-    row[5] = str(streak)
-    row[6] = str(total_count)
-    row[7] = str(max_streak)
-    row[1] = username  # 名前更新
+    streak = int(row[5])
+    total = int(row[6])
+    best = int(row[7])
+    counts = list(map(int, row[8:19]))  # A〜S列フォーマットをそのまま使用
 
-    data[row_idx] = row
-    update_sheet_data(data)
+    # 今日すでに引いた場合
+    if last_date == today:
+        return await interaction.followup.send(
+            f"## 💡 {username} は今日はもうひまみくじを引きました！\n"
+            f"## 結果：【{last_result}】 [ひまみくじ継続中！！！ {streak}️⃣日目！！！]\n"
+            f"（{last_time} に引きました）"
+        )
 
-    await interaction.followup.send(
-        f"## {username} の今日の運勢は【{result}】です！\n"
-        f"## ［ひまみくじ継続中！！！ {streak}️⃣日目！！！］（{now_time} に引きました）"
+    # ============ 本日初回処理 ============
+    result = draw_fortune()
+
+    # streak
+    if (datetime.strptime(today, "%Y-%m-%d") -
+        datetime.strptime(last_date, "%Y-%m-%d")) == timedelta(days=1):
+        streak += 1
+    else:
+        streak = 1
+
+    total += 1
+    best = max(best, streak)
+
+    counts[fortune_list.index(result)] += 1
+
+    write_sheet(user_id, username, today, now_time, result, streak, total, best, counts)
+
+    return await interaction.followup.send(
+        f"## 🎉 **{username} の今日の運勢は【{result}】です！**\n"
+        f"## [ひまみくじ継続中！！！ {streak}️⃣ 日目！！！]"
     )
 
-# --- 実行 ---
-bot.run(TOKEN)
+
+# ===== 起動 =====
+@bot.event
+async def on_ready():
+    await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+    print("ひまみくじ BOT 起動しました！")
 
 
+bot.run(DISCORD_TOKEN)
 
 
