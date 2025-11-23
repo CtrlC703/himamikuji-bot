@@ -27,7 +27,9 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ===== Google Sheet =====
 SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = Credentials.from_service_account_file(GOOGLE_SERVICE_KEY, scopes=SCOPES)
+import json
+service_info = json.loads(GOOGLE_SERVICE_KEY)
+creds = Credentials.from_service_account_info(service_info, scopes=SCOPES)
 client = gspread.authorize(creds)
 sheet = client.open("ひまみくじデータ").sheet1  # 位置は絶対に変えない
 
