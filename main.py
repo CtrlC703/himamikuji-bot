@@ -27,21 +27,34 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ===== Google Sheet =====
 SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-
-import json
-service_account_info = json.loads(GOOGLE_SERVICE_KEY)
-creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
+creds = Credentials.from_service_account_file(GOOGLE_SERVICE_KEY, scopes=SCOPES)
 client = gspread.authorize(creds)
-
 sheet = client.open("ひまみくじデータ").sheet1  # 位置は絶対に変えない
+
+# 🔽 ここに追加 ＆ 既存の get_sheet_row/write_sheet を置き換える 🔽
+
+def clean_cell(v):
+    if v is None:
+        return ""
+    return str(v).strip().replace("'", "").replace("\u200b", "")
 
 def get_sheet_row(user_id):
     rows = sheet.get_all_values()
     for i, row in enumerate(rows):
-        if row[0] == user_id:
-            return i, row
+        if clean_cell(row[0]) == clean_cell(user_id):
+            cleaned_row = [clean_cell(c) for c in row]  # 行全体をクリーン
+            print("DEBUG CLEANED ROW:", repr(cleaned_row))  # ← 追加（デバッグ用）
+            return i, cleaned_row
     return None, None
 
+def write_sheet(user_id, username, date, time, result, streak, total, best, counts):
+    row_index, row = get_sheet_row(user_id)
+    values = [user_id, username, date, time, result, streak, total, best] + counts
+
+    if row_index is not None:
+        sheet.update(f"A{row_index+1}:S{row_index+1}", [values])
+    else:
+        sheet.append_row(values)
 
 def write_sheet(user_id, username, date, time, result, streak, total, best, counts):
     row_index, row = get_sheet_row(user_id)
@@ -52,7 +65,6 @@ def write_sheet(user_id, username, date, time, result, streak, total, best, coun
         sheet.update(f"A{row_index+1}:S{row_index+1}", [values])
     else:
         sheet.append_row(values)
-
 
 # ===== ひまみくじ確率 =====
 fortune_list = [
