@@ -54,17 +54,7 @@ def write_sheet(user_id, username, date, time, result, streak, total, best, coun
     values = [user_id, username, date, time, result, streak, total, best] + counts
 
     if row_index is not None:
-        sheet.update(f"A{row_index+1}:S{row_index+1}", [values])
-    else:
-        sheet.append_row(values)
-
-def write_sheet(user_id, username, date, time, result, streak, total, best, counts):
-    row_index, row = get_sheet_row(user_id)
-
-    values = [user_id, username, date, time, result, streak, total, best] + counts
-
-    if row_index is not None:
-        sheet.update(f"A{row_index+1}:S{row_index+1}", [values])
+        sheet.update(range_name=f"A{row_index+1}:S{row_index+1}", values=[values])
     else:
         sheet.append_row(values)
 
@@ -108,9 +98,10 @@ async def himamikuji(interaction: discord.Interaction):
         )
 
     # ============ 既存ユーザー ============
-    last_date = row[2]
-    last_time = row[3]
-    last_result = row[4]
+    last_date = row[2].replace("'", "").strip()
+    last_time = row[3].replace("'", "").strip()
+    last_result = row[4].replace("'", "").strip()
+
 
     streak = int(row[5])
     total = int(row[6])
