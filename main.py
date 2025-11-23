@@ -27,11 +27,13 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ===== Google Sheet =====
 SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = Credentials.from_service_account_file(GOOGLE_SERVICE_KEY, scopes=SCOPES)
+
+import json
+service_account_info = json.loads(GOOGLE_SERVICE_KEY)
+creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
 client = gspread.authorize(creds)
 
 sheet = client.open("ひまみくじデータ").sheet1  # 位置は絶対に変えない
-
 
 def get_sheet_row(user_id):
     rows = sheet.get_all_values()
