@@ -70,6 +70,10 @@ def draw_fortune():
 
 
 # ===== コマンド =====
+from datetime import datetime, timedelta, timezone
+
+JST = timezone(timedelta(hours=9))
+
 @bot.tree.command(name="ひまみくじ", description="1日1回ひまみくじを引けます!", guild=discord.Object(id=GUILD_ID))
 async def himamikuji(interaction: discord.Interaction):
 
@@ -77,8 +81,9 @@ async def himamikuji(interaction: discord.Interaction):
 
     user_id = str(interaction.user.id)
     username = interaction.user.display_name
-    today = datetime.now().strftime("%Y-%m-%d")
-    now_time = datetime.now().strftime("%H:%M")
+
+    today = datetime.now(JST).strftime("%Y-%m-%d")   # ← JST に変更
+    now_time = datetime.now(JST).strftime("%H:%M")   # ← JST に変更
 
     row_index, row = get_sheet_row(user_id)
 
