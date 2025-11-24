@@ -99,7 +99,7 @@ async def himamikuji(interaction: discord.Interaction):
 
         return await interaction.followup.send(
             f"## 🎉 **{username} の今日の運勢は【{result}】です！**\n"
-            f"## [ひまみくじ継続中！！！ 🔥1️⃣ 日目！！！]"
+            f"## [ひまみくじ継続中！！！ 1️⃣ 日目！！！]"
         )
 
     # ============ 既存ユーザー ============
