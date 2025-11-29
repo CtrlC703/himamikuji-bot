@@ -69,6 +69,23 @@ def draw_fortune():
     return random.choices(fortune_list, weights=fortune_weights, k=1)[0]
 
 
+# ===== ユーティリティ: 数字を絵文字に変換 =====
+def number_to_emoji(num: int) -> str:
+    emoji_digits = {
+        "0": "0️⃣",
+        "1": "1️⃣",
+        "2": "2️⃣",
+        "3": "3️⃣",
+        "4": "4️⃣",
+        "5": "5️⃣",
+        "6": "6️⃣",
+        "7": "7️⃣",
+        "8": "8️⃣",
+        "9": "9️⃣"
+    }
+    return "".join(emoji_digits[d] for d in str(num))
+
+
 # ===== コマンド =====
 from datetime import datetime, timedelta, timezone
 
@@ -97,9 +114,11 @@ async def himamikuji(interaction: discord.Interaction):
 
         write_sheet(user_id, username, today, now_time, result, streak, total, best, counts)
 
+        emoji_streak = number_to_emoji(streak)
+
         return await interaction.followup.send(
             f"## 🎉 **{username} の今日の運勢は【{result}】です！**\n"
-            f"## [ひまみくじ継続中！！！ 1️⃣ 日目！！！]"
+            f"## [ひまみくじ継続中！！！ {emoji_streak} 日目！！！]"
         )
 
     # ============ 既存ユーザー ============
@@ -115,9 +134,10 @@ async def himamikuji(interaction: discord.Interaction):
 
     # 今日すでに引いた場合
     if last_date == today:
+        emoji_streak = number_to_emoji(streak)
         return await interaction.followup.send(
             f"## 💡 {username} は今日はもうひまみくじを引きました！\n"
-            f"## 結果：【{last_result}】 [ひまみくじ継続中！！！ {streak}️⃣日目！！！]\n"
+            f"## 結果：【{last_result}】 [ひまみくじ継続中！！！ {emoji_streak} 日目！！！]\n"
             f"（{last_time} に引きました）"
         )
 
@@ -138,9 +158,11 @@ async def himamikuji(interaction: discord.Interaction):
 
     write_sheet(user_id, username, today, now_time, result, streak, total, best, counts)
 
+    emoji_streak = number_to_emoji(streak)
+
     return await interaction.followup.send(
         f"## 🎉 **{username} の今日の運勢は【{result}】です！**\n"
-        f"## [ひまみくじ継続中！！！ {streak}️⃣ 日目！！！]"
+        f"## [ひまみくじ継続中！！！ {emoji_streak} 日目！！！]"
     )
 
 
