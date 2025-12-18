@@ -2,22 +2,41 @@ import os
 import random
 import discord
 from discord.ext import commands
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import gspread
 from google.oauth2.service_account import Credentials
-import psycopg2
+import json
 from dotenv import load_dotenv
+from flask import Flask  ### 修正箇所 ###
+from threading import Thread  ### 修正箇所 ###
 
 load_dotenv()
 
 # ====== ENV ======
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = int(os.getenv("GUILD_ID"))
-DATABASE_URL = os.getenv("DATABASE_URL")
+# DATABASE_URL = os.getenv("DATABASE_URL") # 未使用なら削除可
 GOOGLE_SERVICE_KEY = os.getenv("GOOGLE_SERVICE_KEY")
 
 if not DISCORD_TOKEN:
     raise ValueError("DISCORD_TOKEN が .env に設定されていません")
+
+### 修正箇所：Renderのスリープ防止用Webサーバー設定 ###
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is alive!"
+
+def run():
+    # Renderが割り当てるポート番号を取得。デフォルトは8080
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+###################################################
 
 # ===== Discord Bot =====
 intents = discord.Intents.default()
@@ -27,13 +46,10 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ===== Google Sheet =====
 SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-import json
 service_info = json.loads(GOOGLE_SERVICE_KEY)
 creds = Credentials.from_service_account_info(service_info, scopes=SCOPES)
 client = gspread.authorize(creds)
-sheet = client.open("ひまみくじデータ").sheet1  # 位置は絶対に変えない
-
-# 🔽 ここに追加 ＆ 既存の get_sheet_row/write_sheet を置き換える 🔽
+sheet = client.open("ひまみくじデータ").sheet1
 
 def clean_cell(v):
     if v is None:
@@ -44,8 +60,8 @@ def get_sheet_row(user_id):
     rows = sheet.get_all_values()
     for i, row in enumerate(rows):
         if clean_cell(row[0]) == clean_cell(user_id):
-            cleaned_row = [clean_cell(c) for c in row]  # 行全体をクリーン
-            print("DEBUG CLEANED ROW:", repr(cleaned_row))  # ← 追加（デバッグ用）
+            cleaned_row = [clean_cell(c) for c in row]
+            print("DEBUG CLEANED ROW:", repr(cleaned_row))
             return i, cleaned_row
     return None, None
 
@@ -64,75 +80,51 @@ fortune_list = [
 ]
 fortune_weights = [0.5,15,20,25,35,1,10,5,0.1,0.5,0.5]
 
-
 def draw_fortune():
     return random.choices(fortune_list, weights=fortune_weights, k=1)[0]
-
 
 # ===== ユーティリティ: 数字を絵文字に変換 =====
 def number_to_emoji(num: int) -> str:
     emoji_digits = {
-        "0": "0️⃣",
-        "1": "1️⃣",
-        "2": "2️⃣",
-        "3": "3️⃣",
-        "4": "4️⃣",
-        "5": "5️⃣",
-        "6": "6️⃣",
-        "7": "7️⃣",
-        "8": "8️⃣",
-        "9": "9️⃣"
+        "0": "0️⃣", "1": "1️⃣", "2": "2️⃣", "3": "3️⃣", "4": "4️⃣",
+        "5": "5️⃣", "6": "6️⃣", "7": "7️⃣", "8": "8️⃣", "9": "9️⃣"
     }
     return "".join(emoji_digits[d] for d in str(num))
 
-
 # ===== コマンド =====
-from datetime import datetime, timedelta, timezone
-
 JST = timezone(timedelta(hours=9))
 
 @bot.tree.command(name="ひまみくじ", description="1日1回ひまみくじを引けます!", guild=discord.Object(id=GUILD_ID))
 async def himamikuji(interaction: discord.Interaction):
-
     await interaction.response.defer()
-
     user_id = str(interaction.user.id)
     username = interaction.user.display_name
-
-    today = datetime.now(JST).strftime("%Y-%m-%d")   # ← JST に変更
-    now_time = datetime.now(JST).strftime("%H:%M")   # ← JST に変更
+    today = datetime.now(JST).strftime("%Y-%m-%d")
+    now_time = datetime.now(JST).strftime("%H:%M")
 
     row_index, row = get_sheet_row(user_id)
 
-    # ============ 初回ユーザー ============
     if row is None:
         result = draw_fortune()
         streak = 1
         total = 1
         best = 1
         counts = [1 if f == result else 0 for f in fortune_list]
-
         write_sheet(user_id, username, today, now_time, result, streak, total, best, counts)
-
         emoji_streak = number_to_emoji(streak)
-
         return await interaction.followup.send(
             f"## 🎉 **{username} の今日の運勢は【{result}】です！**\n"
             f"## [ひまみくじ継続中！！！ {emoji_streak} 日目！！！]"
         )
 
-    # ============ 既存ユーザー ============
     last_date = row[2].replace("'", "").strip()
     last_time = row[3].replace("'", "").strip()
     last_result = row[4].replace("'", "").strip()
-
-
     streak = int(row[5])
     total = int(row[6])
     best = int(row[7])
-    counts = list(map(int, row[8:19]))  # A〜S列フォーマットをそのまま使用
+    counts = list(map(int, row[8:19]))
 
-    # 今日すでに引いた場合
     if last_date == today:
         emoji_streak = number_to_emoji(streak)
         return await interaction.followup.send(
@@ -141,30 +133,21 @@ async def himamikuji(interaction: discord.Interaction):
             f"（{last_time} に引きました）"
         )
 
-    # ============ 本日初回処理 ============
     result = draw_fortune()
-
-    # streak
-    if (datetime.strptime(today, "%Y-%m-%d") -
-        datetime.strptime(last_date, "%Y-%m-%d")) == timedelta(days=1):
+    if (datetime.strptime(today, "%Y-%m-%d") - datetime.strptime(last_date, "%Y-%m-%d")) == timedelta(days=1):
         streak += 1
     else:
         streak = 1
-
     total += 1
     best = max(best, streak)
-
     counts[fortune_list.index(result)] += 1
 
     write_sheet(user_id, username, today, now_time, result, streak, total, best, counts)
-
     emoji_streak = number_to_emoji(streak)
-
     return await interaction.followup.send(
         f"## 🎉 **{username} の今日の運勢は【{result}】です！**\n"
         f"## [ひまみくじ継続中！！！ {emoji_streak} 日目！！！]"
     )
-
 
 # ===== 起動 =====
 @bot.event
@@ -172,7 +155,6 @@ async def on_ready():
     await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
     print("ひまみくじ BOT 起動しました！")
 
-
-bot.run(DISCORD_TOKEN)
-
-
+if __name__ == "__main__":
+    keep_alive()  ### 修正箇所：Webサーバーを起動 ###
+    bot.run(DISCORD_TOKEN)
